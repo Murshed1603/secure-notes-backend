@@ -161,7 +161,7 @@ router.put('/:id', protect, adminOnly, async (req, res) => {
   }
 });
 
-// DELETE /api/users/:id (Admin deletes user)
+// DELETE /api/users/:id (Admin can delete users)
 router.delete('/:id', protect, adminOnly, async (req, res) => {
   try {
     const deleted = await User.findByIdAndDelete(req.params.id);
