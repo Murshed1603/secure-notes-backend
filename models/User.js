@@ -17,7 +17,9 @@ const userSchema = new mongoose.Schema(
     },
     role: { type: String, enum: ['user', 'admin'], default: 'user' },
     status: { type: String, enum: ['pending', 'approved'], default: 'pending' },
-    interests: [{ type: String, trim: true, lowercase: true }]
+    interests: [{ type: String, trim: true, lowercase: true }],
+    resetPasswordToken: { type: String },
+    resetPasswordExpires: { type: Date }
   },
   { timestamps: true }
 );

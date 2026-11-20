@@ -1,6 +1,8 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 const User = require('../models/User');
 const { protect } = require('../middleware/auth');
 
@@ -17,6 +19,15 @@ function validateCredentials(email, password) {
   }
   return null;
 }
+
+// Configure Gmail SMTP transporter
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  }
+});
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
@@ -40,8 +51,6 @@ router.post('/register', async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Bootstrap check: if no admin exists yet, make the first account the approved Admin.
-    // Every subsequent public registration is strictly a 'user' with 'pending' status.
     const existingAdmin = await User.findOne({ role: 'admin' }).select('_id');
     const isFirstAdmin = !existingAdmin;
 
@@ -133,6 +142,84 @@ router.post('/login', async (req, res) => {
         interests: user.interests
       }
     });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// POST /api/auth/forgot-password (Sends reset token ONLY to user's email inbox)
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email || !EMAIL_REGEX.test(email.trim())) {
+      return res.status(400).json({ message: 'Please enter a valid email address' });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    if (!user) {
+      // Generic message prevents attackers from checking which emails exist
+      return res.json({ message: 'If an account with that email exists, a reset code has been sent to your inbox.' });
+    }
+
+    const rawToken = crypto.randomBytes(20).toString('hex');
+    user.resetPasswordToken = crypto.createHash('sha256').update(rawToken).digest('hex');
+    user.resetPasswordExpires = Date.now() + 15 * 60 * 1000; // 15 minutes
+    await user.save();
+
+    await transporter.sendMail({
+      from: `"Secure Note-Taking Platform" <${process.env.EMAIL_USER}>`,
+      to: user.email,
+      subject: 'Password Reset Verification Code',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 500px; padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
+          <h2 style="color: #0f172a;">Password Reset Request</h2>
+          <p>Hello <strong>${user.name}</strong>,</p>
+          <p>We received a request to reset your password. Copy the security code below and paste it into the Reset Password form (valid for <strong>15 minutes</strong>):</p>
+          <div style="background: #f1f5f9; padding: 12px; font-family: monospace; font-size: 16px; font-weight: bold; border-radius: 6px; word-break: break-all;">
+            ${rawToken}
+          </div>
+          <p style="color: #64748b; font-size: 13px; margin-top: 16px;">If you did not request this, you can safely ignore this email.</p>
+        </div>
+      `
+    });
+
+    // Notice: rawToken is NEVER returned in the JSON response
+    res.json({ message: 'If an account with that email exists, a reset code has been sent to your inbox.' });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to send reset email. Check server email configuration.' });
+  }
+});
+
+// POST /api/auth/reset-password
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !token.trim()) {
+      return res.status(400).json({ message: 'Reset code from your email is required' });
+    }
+    if (!newPassword || typeof newPassword !== 'string' || newPassword.trim().length < 6) {
+      return res.status(400).json({ message: 'New password must be at least 6 characters' });
+    }
+
+    const hashedToken = crypto.createHash('sha256').update(token.trim()).digest('hex');
+
+    const user = await User.findOne({
+      resetPasswordToken: hashedToken,
+      resetPasswordExpires: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid or expired reset code' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(newPassword, salt);
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+    await user.save();
+
+    res.json({ message: 'Password updated successfully! You can now sign in with your new password.' });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
