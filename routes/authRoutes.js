@@ -20,13 +20,16 @@ function validateCredentials(email, password) {
   return null;
 }
 
-// Configure Gmail SMTP transporter
+// Configure Gmail SMTP transporter (Port 587 STARTTLS works reliably on cloud hosts)
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false,
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS
-  }
+  },
+  connectionTimeout: 10000
 });
 
 // POST /api/auth/register
@@ -147,7 +150,7 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// POST /api/auth/forgot-password (Sends reset token ONLY to user's email inbox)
+// POST /api/auth/forgot-password
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
@@ -157,13 +160,12 @@ router.post('/forgot-password', async (req, res) => {
 
     const user = await User.findOne({ email: email.toLowerCase().trim() });
     if (!user) {
-      // Generic message prevents attackers from checking which emails exist
       return res.json({ message: 'If an account with that email exists, a reset code has been sent to your inbox.' });
     }
 
     const rawToken = crypto.randomBytes(20).toString('hex');
     user.resetPasswordToken = crypto.createHash('sha256').update(rawToken).digest('hex');
-    user.resetPasswordExpires = Date.now() + 15 * 60 * 1000; // 15 minutes
+    user.resetPasswordExpires = Date.now() + 15 * 60 * 1000;
     await user.save();
 
     await transporter.sendMail({
@@ -183,10 +185,10 @@ router.post('/forgot-password', async (req, res) => {
       `
     });
 
-    // Notice: rawToken is NEVER returned in the JSON response
     res.json({ message: 'If an account with that email exists, a reset code has been sent to your inbox.' });
   } catch (err) {
-    res.status(500).json({ message: 'Failed to send reset email. Check server email configuration.' });
+    console.error('Email send error:', err);
+    res.status(500).json({ message: `Email error: ${err.message}` });
   }
 });
 
