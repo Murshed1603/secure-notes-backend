@@ -2,29 +2,45 @@ const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema(
   {
-    name: { type: String, required: [true, 'Name is required'], trim: true },
+    name: {
+      type: String,
+      required: [true, 'Name is required'],
+      trim: true
+    },
     email: {
       type: String,
       required: [true, 'Email is required'],
       lowercase: true,
       trim: true,
-      match: [/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/, 'Invalid email address']
+      match: [/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/, 'Please provide a valid email address']
     },
     password: {
       type: String,
       required: [true, 'Password is required'],
       minlength: [6, 'Password must be at least 6 characters']
     },
-    role: { type: String, enum: ['user', 'admin'], default: 'user' },
-    status: { type: String, enum: ['pending', 'approved'], default: 'pending' },
-    interests: [{ type: String, trim: true, lowercase: true }],
-    resetPasswordToken: { type: String },
-    resetPasswordExpires: { type: Date }
+    role: {
+      type: String,
+      enum: ['user', 'admin'],
+      default: 'user'
+    },
+    status: {
+      type: String,
+      enum: ['pending', 'approved'],
+      default: 'pending'
+    },
+    interests: [
+      {
+        type: String,
+        trim: true,
+        lowercase: true
+      }
+    ]
   },
   { timestamps: true }
 );
 
-// STRICT INDEXES (Zero unnecessary indexes):
+// Indexes supporting login uniqueness, admin user sorting, and interest aggregation
 userSchema.index({ email: 1 }, { unique: true });
 userSchema.index({ createdAt: -1 });
 userSchema.index({ interests: 1 });
