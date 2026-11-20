@@ -5,13 +5,12 @@ const { protect, adminOnly } = require('../middleware/auth');
 
 const router = express.Router();
 
-// @route   GET /api/users/by-interests
-// @desc    AGGREGATION SCENARIO 1: Group users by interests using a SINGLE aggregate() call
-// @access  Protected (any logged-in user or admin)
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+// AGGREGATION SCENARIO 1: Group users by interests (single aggregate call)
 router.get('/by-interests', protect, async (req, res) => {
   try {
-    // Strictly ONE User.aggregate() call, supported by { interests: 1 } index
-    const groupedUsers = await User.aggregate([
+    const grouped = await User.aggregate([
       { $unwind: '$interests' },
       {
         $group: {
@@ -19,7 +18,7 @@ router.get('/by-interests', protect, async (req, res) => {
           userCount: { $sum: 1 },
           users: {
             $push: {
-              _id: '$_id',
+              id: '$_id',
               name: '$name',
               email: '$email',
               role: '$role'
@@ -27,21 +26,20 @@ router.get('/by-interests', protect, async (req, res) => {
           }
         }
       },
-      { $sort: { _id: 1 } }
+      { $sort: { userCount: -1, _id: 1 } }
     ]);
 
-    res.json(groupedUsers);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.json(grouped);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 
-// @route   GET /api/users?page=1&limit=10
-// @desc    Admin: List all users (paginated, uses { createdAt: -1 } index)
+// GET /api/users (Admin only, paginated)
 router.get('/', protect, adminOnly, async (req, res) => {
   try {
-    const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.max(1, parseInt(req.query.limit) || 10);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 100);
     const skip = (page - 1) * limit;
 
     const [users, totalItems] = await Promise.all([
@@ -62,99 +60,115 @@ router.get('/', protect, adminOnly, async (req, res) => {
         totalPages: Math.ceil(totalItems / limit)
       }
     });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 
-// @route   GET /api/users/:id
-// @desc    Admin: Get single user profile (uses built-in _id index)
+// GET /api/users/:id (Admin only)
 router.get('/:id', protect, adminOnly, async (req, res) => {
   try {
     const user = await User.findById(req.params.id).select('-password');
     if (!user) return res.status(404).json({ message: 'User not found' });
     res.json(user);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 
-// @route   POST /api/users
-// @desc    Admin: Add a new user
+// POST /api/users (Admin creates user)
 router.post('/', protect, adminOnly, async (req, res) => {
   try {
     const { name, email, password, role, interests } = req.body;
-    if (!name || !email || !password) {
-      return res.status(400).json({ message: 'Name, email, and password are required' });
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ message: 'Name is required' });
+    }
+    if (!email || !EMAIL_REGEX.test(email.trim())) {
+      return res.status(400).json({ message: 'Invalid email address' });
+    }
+    if (!password || typeof password !== 'string' || password.trim().length < 6) {
+      return res.status(400).json({ message: 'Invalid password: must be at least 6 characters' });
     }
 
-    const exists = await User.findOne({ email: email.toLowerCase() });
-    if (exists) return res.status(400).json({ message: 'Email already in use' });
+    const existing = await User.findOne({ email: email.toLowerCase().trim() });
+    if (existing) {
+      return res.status(400).json({ message: 'Email already registered' });
+    }
 
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
     const user = await User.create({
-      name,
-      email,
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
       password: hashedPassword,
       role: role === 'admin' ? 'admin' : 'user',
       interests: Array.isArray(interests) ? interests : []
     });
 
     res.status(201).json({
-      _id: user._id,
+      id: user._id,
       name: user.name,
       email: user.email,
       role: user.role,
       interests: user.interests
     });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+  } catch (err) {
+    if (err.name === 'ValidationError') {
+      const msg = Object.values(err.errors).map((e) => e.message).join(', ');
+      return res.status(400).json({ message: msg });
+    }
+    res.status(500).json({ message: err.message });
   }
 });
 
-// @route   PUT /api/users/:id
-// @desc    Admin: Update user details or role
+// PUT /api/users/:id (Admin updates user)
 router.put('/:id', protect, adminOnly, async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
-    if (!user) return res.status(404).json({ message: 'User not found' });
+    const { name, email, password, role, interests } = req.body;
+    const updates = {};
 
-    user.name = req.body.name ?? user.name;
-    user.email = req.body.email ?? user.email;
-    if (req.body.role) user.role = req.body.role;
-    if (Array.isArray(req.body.interests)) user.interests = req.body.interests;
-
-    if (req.body.password) {
+    if (name !== undefined) {
+      if (!name.trim()) return res.status(400).json({ message: 'Name cannot be empty' });
+      updates.name = name.trim();
+    }
+    if (email !== undefined) {
+      if (!EMAIL_REGEX.test(email.trim())) {
+        return res.status(400).json({ message: 'Invalid email address' });
+      }
+      updates.email = email.toLowerCase().trim();
+    }
+    if (role !== undefined) updates.role = role === 'admin' ? 'admin' : 'user';
+    if (interests !== undefined) updates.interests = interests;
+    if (password) {
+      if (password.trim().length < 6) {
+        return res.status(400).json({ message: 'Invalid password: must be at least 6 characters' });
+      }
       const salt = await bcrypt.genSalt(10);
-      user.password = await bcrypt.hash(req.body.password, salt);
+      updates.password = await bcrypt.hash(password, salt);
     }
 
-    const updated = await user.save();
-    res.json({
-      _id: updated._id,
-      name: updated.name,
-      email: updated.email,
-      role: updated.role,
-      interests: updated.interests
-    });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+    const updated = await User.findByIdAndUpdate(req.params.id, updates, {
+      new: true,
+      runValidators: true
+    }).select('-password');
+
+    if (!updated) return res.status(404).json({ message: 'User not found' });
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 
-// @route   DELETE /api/users/:id
-// @desc    Admin: Remove a user
+// DELETE /api/users/:id (Admin deletes user)
 router.delete('/:id', protect, adminOnly, async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
-    if (!user) return res.status(404).json({ message: 'User not found' });
-
-    await user.deleteOne();
-    res.json({ message: 'User removed successfully' });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+    const deleted = await User.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ message: 'User not found' });
+    res.json({ message: 'User deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 

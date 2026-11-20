@@ -1,29 +1,29 @@
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema(
-    {
-        name: {type: String, required: true, trim: true},
-        email: {type: String, required: true, lowercase: true, trim: true},
-        password: {type: String, required: true},
-        role: {
-            type: String,
-            enum: ['user', 'admin'],
-            default: 'user'
-        },
-        interests: [{type: String, trim: true}] // this section is for user's interests, like hobbies
+  {
+    name: { type: String, required: [true, 'Name is required'], trim: true },
+    email: {
+      type: String,
+      required: [true, 'Email is required'],
+      lowercase: true,
+      trim: true,
+      match: [/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/, 'Invalid email address']
     },
-    {timestamps: true}
+    password: {
+      type: String,
+      required: [true, 'Password is required'],
+      minlength: [6, 'Password must be at least 6 characters']
+    },
+    role: { type: String, enum: ['user', 'admin'], default: 'user' },
+    interests: [{ type: String, trim: true, lowercase: true }]
+  },
+  { timestamps: true }
 );
 
-// strict indexes ( using SCHEMA.index as per requirements)
-// supports login or lookup by email and prevents duplicate accounts
-userSchema.index({email: 1}, {unique: true});
-
-// schema for admin listing all users sorted by latest first
-// also pagination is used
-userSchema.index({createdAt: -1});
-
-// schema for grouping users by Interests
-userSchema.index({interests: 1});
+// STRICT INDEXES:
+userSchema.index({ email: 1 }, { unique: true });
+userSchema.index({ createdAt: -1 });
+userSchema.index({ interests: 1 });
 
 module.exports = mongoose.model('User', userSchema);
