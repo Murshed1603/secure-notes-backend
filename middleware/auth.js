@@ -1,38 +1,36 @@
 const jwt = require('jsonwebtoken');
+const User = require('../models/User');
 
-// verifying JWT token
-// for this, log in is must
-const protect = (req, res, next) => {
-    let token;
+const protect = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ message: 'Not authorized, token missing' });
+  }
 
-    if(req.headers.authorization && 
-        req.headers.authorization.startsWith('Bearer')
-    ) {
-        try {
-        // extracting token after bearer
-        token = req.headers.authorization.split(' ')[1];
-        // verifying token using our JWT secret
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  try {
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-        // attaching user info such as id and role to the request object
-        req.user = {
-            id: decoded.id,
-            role: decoded.role
-        };
-        return next();
-    } catch (error) {
-        return res.status(401).json({message: 'Not authorized, INVALID TOKEN'});
+    const user = await User.findById(decoded.id).select('_id role status');
+    if (!user) {
+      return res.status(401).json({ message: 'User no longer exists' });
     }
-}
-return res.status(401).json({message: 'Not Authorized, NO TOKEN PROVIDED'});
+    if (user.status !== 'approved') {
+      return res.status(403).json({ message: 'Account is pending admin approval' });
+    }
+
+    req.user = { id: user._id.toString(), role: user.role };
+    next();
+  } catch (err) {
+    res.status(401).json({ message: 'Not authorized, invalid or expired token' });
+  }
 };
 
-// checking role, for ADMIN Access only
 const adminOnly = (req, res, next) => {
-    if(req.user && req.user.role === 'admin') {
-        return next();
-    }
-    return res.status(403).json({message : 'Access Denied !! Only for Admin Access.'});
+  if (req.user && req.user.role === 'admin') {
+    return next();
+  }
+  return res.status(403).json({ message: 'Access denied: Admins only' });
 };
 
-module.exports = {protect, adminOnly};
+module.exports = { protect, adminOnly };

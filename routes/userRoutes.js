@@ -11,6 +11,7 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 router.get('/by-interests', protect, async (req, res) => {
   try {
     const grouped = await User.aggregate([
+      { $match: { status: 'approved' } },
       { $unwind: '$interests' },
       {
         $group: {
@@ -76,7 +77,7 @@ router.get('/:id', protect, adminOnly, async (req, res) => {
   }
 });
 
-// POST /api/users (Admin creates user)
+// POST /api/users (Admin creates pre-approved user or admin)
 router.post('/', protect, adminOnly, async (req, res) => {
   try {
     const { name, email, password, role, interests } = req.body;
@@ -104,6 +105,7 @@ router.post('/', protect, adminOnly, async (req, res) => {
       email: email.toLowerCase().trim(),
       password: hashedPassword,
       role: role === 'admin' ? 'admin' : 'user',
+      status: 'approved',
       interests: Array.isArray(interests) ? interests : []
     });
 
@@ -112,6 +114,7 @@ router.post('/', protect, adminOnly, async (req, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
+      status: user.status,
       interests: user.interests
     });
   } catch (err) {
@@ -123,10 +126,10 @@ router.post('/', protect, adminOnly, async (req, res) => {
   }
 });
 
-// PUT /api/users/:id (Admin updates user)
+// PUT /api/users/:id (Admin updates role, status approval, or profile)
 router.put('/:id', protect, adminOnly, async (req, res) => {
   try {
-    const { name, email, password, role, interests } = req.body;
+    const { name, email, password, role, status, interests } = req.body;
     const updates = {};
 
     if (name !== undefined) {
@@ -140,6 +143,9 @@ router.put('/:id', protect, adminOnly, async (req, res) => {
       updates.email = email.toLowerCase().trim();
     }
     if (role !== undefined) updates.role = role === 'admin' ? 'admin' : 'user';
+    if (status !== undefined && ['pending', 'approved'].includes(status)) {
+      updates.status = status;
+    }
     if (interests !== undefined) updates.interests = interests;
     if (password) {
       if (password.trim().length < 6) {
@@ -161,7 +167,7 @@ router.put('/:id', protect, adminOnly, async (req, res) => {
   }
 });
 
-// DELETE /api/users/:id (Admin can delete users)
+// DELETE /api/users/:id (Admin deletes/rejects user)
 router.delete('/:id', protect, adminOnly, async (req, res) => {
   try {
     const deleted = await User.findByIdAndDelete(req.params.id);

@@ -21,7 +21,7 @@ function validateCredentials(email, password) {
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
   try {
-    const { name, email, password, role, interests } = req.body;
+    const { name, email, password, interests } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({ message: 'Name is required' });
@@ -40,13 +40,26 @@ router.post('/register', async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
+    // Bootstrap check: if no admin exists yet, make the first account the approved Admin.
+    // Every subsequent public registration is strictly a 'user' with 'pending' status.
+    const existingAdmin = await User.findOne({ role: 'admin' }).select('_id');
+    const isFirstAdmin = !existingAdmin;
+
     const user = await User.create({
       name: name.trim(),
       email: email.toLowerCase().trim(),
       password: hashedPassword,
-      role: role === 'admin' ? 'admin' : 'user',
+      role: isFirstAdmin ? 'admin' : 'user',
+      status: isFirstAdmin ? 'approved' : 'pending',
       interests: Array.isArray(interests) ? interests : []
     });
+
+    if (!isFirstAdmin) {
+      return res.status(201).json({
+        pendingApproval: true,
+        message: 'Registration submitted! An administrator must approve your account before you can sign in.'
+      });
+    }
 
     const token = jwt.sign(
       { id: user._id, role: user.role },
@@ -55,12 +68,14 @@ router.post('/register', async (req, res) => {
     );
 
     res.status(201).json({
+      pendingApproval: false,
       token,
       user: {
         id: user._id,
         name: user.name,
         email: user.email,
         role: user.role,
+        status: user.status,
         interests: user.interests
       }
     });
@@ -95,6 +110,12 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
+    if (user.status !== 'approved') {
+      return res.status(403).json({
+        message: 'Your account is awaiting administrator approval. Please try again once approved.'
+      });
+    }
+
     const token = jwt.sign(
       { id: user._id, role: user.role },
       process.env.JWT_SECRET,
@@ -108,6 +129,7 @@ router.post('/login', async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        status: user.status,
         interests: user.interests
       }
     });

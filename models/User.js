@@ -16,12 +16,13 @@ const userSchema = new mongoose.Schema(
       minlength: [6, 'Password must be at least 6 characters']
     },
     role: { type: String, enum: ['user', 'admin'], default: 'user' },
+    status: { type: String, enum: ['pending', 'approved'], default: 'pending' },
     interests: [{ type: String, trim: true, lowercase: true }]
   },
   { timestamps: true }
 );
 
-// STRICT INDEXES:
+// STRICT INDEXES (Zero unnecessary indexes):
 userSchema.index({ email: 1 }, { unique: true });
 userSchema.index({ createdAt: -1 });
 userSchema.index({ interests: 1 });
